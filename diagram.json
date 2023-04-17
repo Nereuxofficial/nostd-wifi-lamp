@@ -1,0 +1,33 @@
+{
+    "version": 1,
+    "editor": "wokwi",
+    "author": "Bene <37740907+Nereuxofficial@users.noreply.github.com>",
+    "parts": [
+        {
+            "type": "board-esp32-devkit-v1",
+            "id": "esp",
+            "top": 0.59,
+            "left": 0.67,
+            "attrs": {
+                "flashSize": "16"
+            }
+        }
+    ],
+    "connections": [
+        [
+            "esp:TX0",
+            "$serialMonitor:RX",
+            "",
+            []
+        ],
+        [
+            "esp:RX0",
+            "$serialMonitor:TX",
+            "",
+            []
+        ]
+    ],
+    "serialMonitor": {
+        "display": "terminal"
+    }
+}
