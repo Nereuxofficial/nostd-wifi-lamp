@@ -4,12 +4,13 @@
 
 extern crate alloc;
 
-use alloc::sync::Arc;
 use embassy_executor::_export::StaticCell;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, Ipv4Address, Stack, StackResources};
 
 use embassy_executor::Executor;
+use embassy_sync::blocking_mutex::NoopMutex;
+use embassy_sync::channel::Receiver;
 use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 use embedded_svc::wifi::{ClientConfiguration, Configuration, Wifi};
@@ -18,17 +19,14 @@ use esp_hal_smartled::{smartLedAdapter, SmartLedsAdapter};
 use esp_println::logger::init_logger;
 use esp_println::println;
 use esp_wifi::initialize;
-use esp_wifi::wifi::{new, WifiController, WifiDevice, WifiEvent, WifiMode, WifiState};
+use esp_wifi::wifi::{WifiController, WifiDevice, WifiEvent, WifiMode, WifiState};
 use hal::clock::{ClockControl, CpuClock};
-use hal::gpio::Bank1GpioRegisterAccess;
-use hal::gpio::DualCoreInteruptStatusRegisterAccessBank1;
-use hal::gpio::GpioPin;
-use hal::gpio::InputOutputAnalogPinType;
-use hal::peripherals::{DPORT, GPIO, IO_MUX, RMT};
-use hal::pulse_control::ConfiguredChannel;
+use hal::cpu_control::CpuControl;
+use hal::gpio::{
+    Bank1GpioRegisterAccess, DualCoreInteruptStatusRegisterAccessBank1, Gpio33Signals, GpioPin,
+    InputOutputAnalogPinType,
+};
 use hal::pulse_control::ConfiguredChannel0;
-use hal::soc::gpio::Gpio33Signals;
-use hal::system::SystemParts;
 use hal::{embassy, peripherals::Peripherals, prelude::*, timer::TimerGroup, Rtc, IO};
 use hal::{PulseControl, Rng};
 use smart_leds::SmartLedsWrite;
@@ -90,7 +88,7 @@ fn main() -> ! {
 
     let config = Config::Dhcp(Default::default());
 
-    let seed = 1234; // very random, very secure seed
+    let seed = 123456; // very random, very secure seed
 
     // Init network stack
     let stack = &*singleton!(Stack::new(
@@ -103,18 +101,44 @@ fn main() -> ! {
     let executor = EXECUTOR.init(Executor::new());
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let pulse = PulseControl::new(peripherals.RMT, &mut system.peripheral_clock_control).unwrap();
-    let mut led = <smartLedAdapter!(12)>::new(pulse.channel0, io.pins.gpio33);
-    led.write([RGB8::default(); 12].into_iter()).unwrap();
+    let mut led = <smartLedAdapter!(23)>::new(pulse.channel0, io.pins.gpio33);
+    led.write([RGB8::default(); 23].into_iter()).unwrap();
+    let channel: Channel<Mutex>> = embassy_sync::channel::Channel::new();
+    let sender = channel.sender();
+    let receiver = channel.receiver();
     executor.run(|spawner| {
         spawner.spawn(connection(controller)).ok();
         spawner.spawn(net_task(&stack)).ok();
         spawner.spawn(task(&stack)).ok();
-        spawner.spawn(led_task()).ok();
+        spawner.spawn(led_task(led)).ok();
     });
 }
-
 #[embassy_executor::task]
-async fn led_task() {}
+async fn led_task(
+    mut leds: SmartLedsAdapter<
+        ConfiguredChannel0<
+            'static,
+            GpioPin<
+                hal::gpio::Unknown,
+                Bank1GpioRegisterAccess,
+                DualCoreInteruptStatusRegisterAccessBank1,
+                InputOutputAnalogPinType,
+                Gpio33Signals,
+                33,
+            >,
+        >,
+        553,
+    >,
+) {
+    loop {
+        leds.write([RGB8::new(0, 0, 255); 23].into_iter()).unwrap();
+        Timer::after(Duration::from_millis(1000)).await;
+        leds.write([RGB8::new(0, 255, 0); 23].into_iter()).unwrap();
+        Timer::after(Duration::from_millis(1000)).await;
+        leds.write([RGB8::new(255, 0, 0); 23].into_iter()).unwrap();
+        Timer::after(Duration::from_millis(1000)).await;
+    }
+}
 
 #[embassy_executor::task]
 async fn connection(mut controller: WifiController<'static>) {
@@ -159,9 +183,6 @@ async fn net_task(stack: &'static Stack<WifiDevice<'static>>) {
 
 #[embassy_executor::task]
 async fn task(stack: &'static Stack<WifiDevice<'static>>) {
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
-
     loop {
         if stack.is_link_up() {
             break;
@@ -176,46 +197,5 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
             break;
         }
         Timer::after(Duration::from_millis(500)).await;
-    }
-
-    loop {
-        Timer::after(Duration::from_millis(1_000)).await;
-
-        let mut socket = TcpSocket::new(&stack, &mut rx_buffer, &mut tx_buffer);
-
-        socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(10)));
-
-        let remote_endpoint = (Ipv4Address::new(142, 250, 185, 115), 80);
-        println!("connecting...");
-        let r = socket.connect(remote_endpoint).await;
-        if let Err(e) = r {
-            println!("connect error: {:?}", e);
-            continue;
-        }
-        println!("connected!");
-        let mut buf = [0; 1024];
-        loop {
-            use embedded_io::asynch::Write;
-            let r = socket
-                .write_all(b"GET / HTTP/1.0\r\nHost: www.mobile-j.de\r\n\r\n")
-                .await;
-            if let Err(e) = r {
-                println!("write error: {:?}", e);
-                break;
-            }
-            let n = match socket.read(&mut buf).await {
-                Ok(0) => {
-                    println!("read EOF");
-                    break;
-                }
-                Ok(n) => n,
-                Err(e) => {
-                    println!("read error: {:?}", e);
-                    break;
-                }
-            };
-            println!("{}", core::str::from_utf8(&buf[..n]).unwrap());
-        }
-        Timer::after(Duration::from_millis(3000)).await;
     }
 }
