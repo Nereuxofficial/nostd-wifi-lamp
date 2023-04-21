@@ -53,3 +53,5 @@ lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 
 [profile.dev.package.esp-wifi]
 opt-level = 3
+[profile.release]
+opt-level = 3

@@ -4,14 +4,17 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 use embassy_executor::_export::StaticCell;
 use embassy_net::tcp::TcpSocket;
-use embassy_net::{Config, Ipv4Address, Stack, StackResources};
+use embassy_net::{Config, IpListenEndpoint, Stack, StackResources};
 
 use embassy_executor::Executor;
-use embassy_sync::blocking_mutex::NoopMutex;
-use embassy_sync::channel::Receiver;
-use embassy_sync::mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_svc::wifi::{ClientConfiguration, Configuration, Wifi};
 use esp_backtrace as _;
@@ -21,7 +24,6 @@ use esp_println::println;
 use esp_wifi::initialize;
 use esp_wifi::wifi::{WifiController, WifiDevice, WifiEvent, WifiMode, WifiState};
 use hal::clock::{ClockControl, CpuClock};
-use hal::cpu_control::CpuControl;
 use hal::gpio::{
     Bank1GpioRegisterAccess, DualCoreInteruptStatusRegisterAccessBank1, Gpio33Signals, GpioPin,
     InputOutputAnalogPinType,
@@ -29,6 +31,7 @@ use hal::gpio::{
 use hal::pulse_control::ConfiguredChannel0;
 use hal::{embassy, peripherals::Peripherals, prelude::*, timer::TimerGroup, Rtc, IO};
 use hal::{PulseControl, Rng};
+use lazy_static::lazy_static;
 use smart_leds::SmartLedsWrite;
 use smart_leds::RGB8;
 
@@ -46,6 +49,14 @@ macro_rules! singleton {
 #[global_allocator]
 static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
+// Since embassy_task doesnt support generics yet, we need a global Mutex to communicate between
+// the web_task and the led_task. This channel is over a CriticalsectionRawMutex, since lazy_static
+// requires the Mutex to be Thread-safe. In there we store up 3 RGB8 values and when full, seinding
+// will wait until a message is received.
+lazy_static! {
+    static ref CHANNEL: Channel<CriticalSectionRawMutex, RGB8, 3> =
+        embassy_sync::channel::Channel::new();
+}
 fn init_heap() {
     const HEAP_SIZE: usize = 32 * 1024;
 
@@ -102,16 +113,106 @@ fn main() -> ! {
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let pulse = PulseControl::new(peripherals.RMT, &mut system.peripheral_clock_control).unwrap();
     let mut led = <smartLedAdapter!(23)>::new(pulse.channel0, io.pins.gpio33);
-    led.write([RGB8::default(); 23].into_iter()).unwrap();
-    let channel: Channel<Mutex>> = embassy_sync::channel::Channel::new();
-    let sender = channel.sender();
-    let receiver = channel.receiver();
+    led.write([RGB8::new(255, 0, 255); 23].into_iter()).unwrap();
     executor.run(|spawner| {
         spawner.spawn(connection(controller)).ok();
         spawner.spawn(net_task(&stack)).ok();
         spawner.spawn(task(&stack)).ok();
         spawner.spawn(led_task(led)).ok();
+        spawner.spawn(web_task(&stack)).ok();
     });
+}
+
+/// This creates a website that can be accessed by the IP address of the ESP32
+#[embassy_executor::task]
+async fn web_task(stack: &'static Stack<WifiDevice<'static>>) {
+    println!("Starting web server...");
+    let sender = CHANNEL.sender();
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096];
+
+    loop {
+        if stack.is_link_up() {
+            break;
+        }
+        Timer::after(Duration::from_millis(500)).await;
+    }
+
+    let mut socket = TcpSocket::new(&stack, &mut rx_buffer, &mut tx_buffer);
+    socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(10)));
+    loop {
+        println!("Wait for connection...");
+        let r = socket
+            .accept(IpListenEndpoint {
+                addr: None,
+                port: 8080,
+            })
+            .await;
+        println!("Connected...");
+
+        if let Err(e) = r {
+            println!("connect error: {:?}", e);
+            continue;
+        }
+
+        use embedded_io::asynch::Write;
+
+        let mut buffer = [0u8; 1024];
+        let mut pos = 0;
+        loop {
+            match socket.read(&mut buffer).await {
+                Ok(0) => {
+                    println!("read EOF");
+                    break;
+                }
+                Ok(len) => {
+                    sender.send(RGB8::new(255, 0, 0)).await;
+                    let to_print =
+                        unsafe { core::str::from_utf8_unchecked(&buffer[..(pos + len)]) };
+
+                    println!("read {} bytes: {}", len, to_print);
+                    // Here we have to parse the request to see if it is a POST request
+                    // If it is a POST request we need to parse the body to get the RGB8 data
+                    if to_print.contains("\r\n\r\n") {
+                        println!("{}", to_print);
+                        break;
+                    }
+
+                    pos += len;
+                }
+                Err(e) => {
+                    println!("read error: {:?}", e);
+                    break;
+                }
+            };
+        }
+
+        let r = socket
+            .write_all(
+                b"HTTP/1.0 200 OK\r\n\r\n\
+            <html>\
+                <body>\
+                    <h1>Hello Rust! Hello esp-wifi!</h1>\
+                </body>\
+            </html>\r\n\
+            ",
+            )
+            .await;
+        if let Err(e) = r {
+            println!("write error: {:?}", e);
+        }
+
+        let r = socket.flush().await;
+        if let Err(e) = r {
+            println!("flush error: {:?}", e);
+        }
+        Timer::after(Duration::from_millis(1000)).await;
+
+        socket.close();
+        Timer::after(Duration::from_millis(1000)).await;
+
+        socket.abort();
+    }
 }
 #[embassy_executor::task]
 async fn led_task(
@@ -131,12 +232,10 @@ async fn led_task(
     >,
 ) {
     loop {
-        leds.write([RGB8::new(0, 0, 255); 23].into_iter()).unwrap();
-        Timer::after(Duration::from_millis(1000)).await;
-        leds.write([RGB8::new(0, 255, 0); 23].into_iter()).unwrap();
-        Timer::after(Duration::from_millis(1000)).await;
-        leds.write([RGB8::new(255, 0, 0); 23].into_iter()).unwrap();
-        Timer::after(Duration::from_millis(1000)).await;
+        println!("Waiting for color...");
+        let receiver = CHANNEL.receiver();
+        let color = receiver.recv().await;
+        leds.write([color; 23].into_iter()).unwrap();
     }
 }
 
@@ -149,6 +248,7 @@ async fn connection(mut controller: WifiController<'static>) {
             WifiState::StaConnected => {
                 // wait until we're no longer connected
                 controller.wait_for_event(WifiEvent::StaDisconnected).await;
+                println!("Wifi disconnected!");
                 Timer::after(Duration::from_millis(5000)).await
             }
             _ => {}
