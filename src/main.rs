@@ -4,10 +4,6 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
-use core::future::Future;
-use core::pin::Pin;
-use core::task::{Context, Poll};
 use embassy_executor::_export::StaticCell;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, IpListenEndpoint, Stack, StackResources};
@@ -58,7 +54,7 @@ lazy_static! {
         embassy_sync::channel::Channel::new();
 }
 fn init_heap() {
-    const HEAP_SIZE: usize = 32 * 1024;
+    const HEAP_SIZE: usize = 2 * 1024;
 
     extern "C" {
         static mut _heap_start: u32;
@@ -116,104 +112,12 @@ fn main() -> ! {
     led.write([RGB8::new(255, 0, 255); 23].into_iter()).unwrap();
     executor.run(|spawner| {
         spawner.spawn(connection(controller)).ok();
-        spawner.spawn(net_task(&stack)).ok();
-        spawner.spawn(task(&stack)).ok();
+        spawner.spawn(net_task(stack)).ok();
+        spawner.spawn(task(stack)).ok();
         spawner.spawn(led_task(led)).ok();
-        spawner.spawn(web_task(&stack)).ok();
     });
 }
 
-/// This creates a website that can be accessed by the IP address of the ESP32
-#[embassy_executor::task]
-async fn web_task(stack: &'static Stack<WifiDevice<'static>>) {
-    println!("Starting web server...");
-    let sender = CHANNEL.sender();
-    let mut rx_buffer = [0; 4096];
-    let mut tx_buffer = [0; 4096];
-
-    loop {
-        if stack.is_link_up() {
-            break;
-        }
-        Timer::after(Duration::from_millis(500)).await;
-    }
-
-    let mut socket = TcpSocket::new(&stack, &mut rx_buffer, &mut tx_buffer);
-    socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(10)));
-    loop {
-        println!("Wait for connection...");
-        let r = socket
-            .accept(IpListenEndpoint {
-                addr: None,
-                port: 8080,
-            })
-            .await;
-        println!("Connected...");
-
-        if let Err(e) = r {
-            println!("connect error: {:?}", e);
-            continue;
-        }
-
-        use embedded_io::asynch::Write;
-
-        let mut buffer = [0u8; 1024];
-        let mut pos = 0;
-        loop {
-            match socket.read(&mut buffer).await {
-                Ok(0) => {
-                    println!("read EOF");
-                    break;
-                }
-                Ok(len) => {
-                    sender.send(RGB8::new(255, 0, 0)).await;
-                    let to_print =
-                        unsafe { core::str::from_utf8_unchecked(&buffer[..(pos + len)]) };
-
-                    println!("read {} bytes: {}", len, to_print);
-                    // Here we have to parse the request to see if it is a POST request
-                    // If it is a POST request we need to parse the body to get the RGB8 data
-                    if to_print.contains("\r\n\r\n") {
-                        println!("{}", to_print);
-                        break;
-                    }
-
-                    pos += len;
-                }
-                Err(e) => {
-                    println!("read error: {:?}", e);
-                    break;
-                }
-            };
-        }
-
-        let r = socket
-            .write_all(
-                b"HTTP/1.0 200 OK\r\n\r\n\
-            <html>\
-                <body>\
-                    <h1>Hello Rust! Hello esp-wifi!</h1>\
-                </body>\
-            </html>\r\n\
-            ",
-            )
-            .await;
-        if let Err(e) = r {
-            println!("write error: {:?}", e);
-        }
-
-        let r = socket.flush().await;
-        if let Err(e) = r {
-            println!("flush error: {:?}", e);
-        }
-        Timer::after(Duration::from_millis(1000)).await;
-
-        socket.close();
-        Timer::after(Duration::from_millis(1000)).await;
-
-        socket.abort();
-    }
-}
 #[embassy_executor::task]
 async fn led_task(
     mut leds: SmartLedsAdapter<
@@ -297,5 +201,92 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
             break;
         }
         Timer::after(Duration::from_millis(500)).await;
+    }
+    println!("Starting web server...");
+    let sender = CHANNEL.sender();
+    let mut rx_buffer = [0; 4096];
+    let mut tx_buffer = [0; 4096];
+
+    loop {
+        if stack.is_link_up() {
+            break;
+        }
+        Timer::after(Duration::from_millis(500)).await;
+    }
+
+    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+    socket.set_timeout(Some(embassy_net::SmolDuration::from_secs(10)));
+    loop {
+        println!("Wait for connection...");
+        let r = socket
+            .accept(IpListenEndpoint {
+                addr: None,
+                port: 8080,
+            })
+            .await;
+        println!("Connected...");
+
+        if let Err(e) = r {
+            println!("connect error: {:?}", e);
+            continue;
+        }
+
+        use embedded_io::asynch::Write;
+
+        let mut buffer = [0u8; 1024];
+        let mut pos = 0;
+        loop {
+            match socket.read(&mut buffer).await {
+                Ok(0) => {
+                    println!("read EOF");
+                    break;
+                }
+                Ok(len) => {
+                    sender.send(RGB8::new(255, 0, 0)).await;
+                    let to_print =
+                        unsafe { core::str::from_utf8_unchecked(&buffer[..(pos + len)]) };
+
+                    println!("read {} bytes: {}", len, to_print);
+                    // Here we have to parse the request to see if it is a POST request
+                    // If it is a POST request we need to parse the body to get the RGB8 data
+                    if to_print.contains("\r\n\r\n") {
+                        println!("{}", to_print);
+                        break;
+                    }
+
+                    pos += len;
+                }
+                Err(e) => {
+                    println!("read error: {:?}", e);
+                    break;
+                }
+            };
+        }
+
+        let r = socket
+            .write_all(
+                b"HTTP/1.0 200 OK\r\n\r\n\
+            <html>\
+                <body>\
+                    <h1>Hello Rust! Hello esp-wifi!</h1>\
+                </body>\
+            </html>\r\n\
+            ",
+            )
+            .await;
+        if let Err(e) = r {
+            println!("write error: {:?}", e);
+        }
+
+        let r = socket.flush().await;
+        if let Err(e) = r {
+            println!("flush error: {:?}", e);
+        }
+        Timer::after(Duration::from_millis(1000)).await;
+
+        socket.close();
+        Timer::after(Duration::from_millis(1000)).await;
+
+        socket.abort();
     }
 }
