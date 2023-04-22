@@ -41,9 +41,6 @@ macro_rules! singleton {
         x
     }};
 }
-#[global_allocator]
-static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
-
 #[derive(Debug, Copy, Clone, serde::Deserialize, serde::Serialize)]
 struct OwnRGB8 {
     r: u8,
@@ -65,6 +62,10 @@ lazy_static! {
     static ref CHANNEL: Channel<CriticalSectionRawMutex, OwnRGB8, 3> =
         embassy_sync::channel::Channel::new();
 }
+
+#[global_allocator]
+static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
+
 fn init_heap() {
     const HEAP_SIZE: usize = 2 * 1024;
 
