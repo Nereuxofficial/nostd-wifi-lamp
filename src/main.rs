@@ -10,7 +10,7 @@ use embassy_net::{Config, IpListenEndpoint, Stack, StackResources};
 
 use embassy_executor::Executor;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
+use embassy_sync::channel::{Channel, Receiver};
 use embassy_time::{Duration, Timer};
 use embedded_svc::wifi::{ClientConfiguration, Configuration, Wifi};
 use esp_backtrace as _;
@@ -28,6 +28,7 @@ use hal::pulse_control::ConfiguredChannel0;
 use hal::{embassy, peripherals::Peripherals, prelude::*, timer::TimerGroup, Rtc, IO};
 use hal::{PulseControl, Rng};
 use lazy_static::lazy_static;
+use serde::de::Unexpected::Map;
 use smart_leds::SmartLedsWrite;
 use smart_leds::RGB8;
 
@@ -58,10 +59,10 @@ impl Into<RGB8> for OwnRGB8 {
     }
 }
 
-// Since embassy_task doesnt support generics yet, we need a global Mutex to communicate between
-// the web_task and the led_task. This channel is over a CriticalsectionRawMutex, since lazy_static
-// requires the Mutex to be Thread-safe. In there we store up 3 RGB8 values and when full, seinding
-// will wait until a message is received.
+// Since lifetime limitations don't allow us to pass a receiver and sender to the webserver and
+// led_task threads, this is an acceptable workaround. This channel is over a
+// CriticalsectionRawMutex, since lazy_static requires the Mutex to be Thread-safe. In there we
+// store up 3 RGB8 values and when full, sending will wait until a message is received.
 lazy_static! {
     static ref CHANNEL: Channel<CriticalSectionRawMutex, OwnRGB8, 3> =
         embassy_sync::channel::Channel::new();
@@ -80,8 +81,6 @@ fn init_heap() {
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 #[entry]
 fn main() -> ! {
-    init_logger(log::LevelFilter::Info);
-
     init_heap();
 
     let peripherals = Peripherals::take();

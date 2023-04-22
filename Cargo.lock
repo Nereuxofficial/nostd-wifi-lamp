@@ -907,7 +907,6 @@ dependencies = [
  "esp32-hal",
  "futures-util",
  "lazy_static",
- "log",
  "serde",
  "serde-json-core",
  "smart-leds",
