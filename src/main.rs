@@ -10,12 +10,11 @@ use embassy_net::{Config, IpListenEndpoint, Stack, StackResources};
 
 use embassy_executor::Executor;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, Receiver};
+use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
 use embedded_svc::wifi::{ClientConfiguration, Configuration, Wifi};
 use esp_backtrace as _;
 use esp_hal_smartled::{smartLedAdapter, SmartLedsAdapter};
-use esp_println::logger::init_logger;
 use esp_println::println;
 use esp_wifi::initialize;
 use esp_wifi::wifi::{WifiController, WifiDevice, WifiEvent, WifiMode, WifiState};
@@ -28,7 +27,6 @@ use hal::pulse_control::ConfiguredChannel0;
 use hal::{embassy, peripherals::Peripherals, prelude::*, timer::TimerGroup, Rtc, IO};
 use hal::{PulseControl, Rng};
 use lazy_static::lazy_static;
-use serde::de::Unexpected::Map;
 use smart_leds::SmartLedsWrite;
 use smart_leds::RGB8;
 
