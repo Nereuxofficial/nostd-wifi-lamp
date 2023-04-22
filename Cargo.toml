@@ -47,6 +47,8 @@ embedded-svc = { version = "0.23.1", default-features = false, features = [] }
 embedded-io = "0.4.0"
 log = "0.4.17"
 smart-leds = "0.3.0"
+serde = { version = "1.0", default-features = false }
+serde-json-core = "0.5.0"
 esp-hal-smartled = {version = "0.1.0", features = ["esp32"]}
 lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 

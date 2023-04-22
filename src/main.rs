@@ -45,12 +45,25 @@ macro_rules! singleton {
 #[global_allocator]
 static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
+#[derive(Debug, Copy, Clone, serde::Deserialize, serde::Serialize)]
+struct OwnRGB8 {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
+impl Into<RGB8> for OwnRGB8 {
+    fn into(self) -> RGB8 {
+        RGB8::new(self.r, self.g, self.b)
+    }
+}
+
 // Since embassy_task doesnt support generics yet, we need a global Mutex to communicate between
 // the web_task and the led_task. This channel is over a CriticalsectionRawMutex, since lazy_static
 // requires the Mutex to be Thread-safe. In there we store up 3 RGB8 values and when full, seinding
 // will wait until a message is received.
 lazy_static! {
-    static ref CHANNEL: Channel<CriticalSectionRawMutex, RGB8, 3> =
+    static ref CHANNEL: Channel<CriticalSectionRawMutex, OwnRGB8, 3> =
         embassy_sync::channel::Channel::new();
 }
 fn init_heap() {
@@ -72,7 +85,6 @@ fn main() -> ! {
     init_heap();
 
     let peripherals = Peripherals::take();
-
     let mut system = peripherals.DPORT.split();
     let clocks = ClockControl::configure(system.clock_control, CpuClock::Clock240MHz).freeze();
     let mut rtc = Rtc::new(peripherals.RTC_CNTL);
@@ -104,12 +116,13 @@ fn main() -> ! {
         singleton!(StackResources::<3>::new()),
         seed
     ));
-
+    // Initialize the embassy executor
     let executor = EXECUTOR.init(Executor::new());
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let pulse = PulseControl::new(peripherals.RMT, &mut system.peripheral_clock_control).unwrap();
     let mut led = <smartLedAdapter!(23)>::new(pulse.channel0, io.pins.gpio33);
-    led.write([RGB8::new(255, 0, 255); 23].into_iter()).unwrap();
+    // Turn the lights off by default
+    led.write([RGB8::default(); 23].into_iter()).unwrap();
     executor.run(|spawner| {
         spawner.spawn(connection(controller)).ok();
         spawner.spawn(net_task(stack)).ok();
@@ -138,7 +151,7 @@ async fn led_task(
     loop {
         println!("Waiting for color...");
         let receiver = CHANNEL.receiver();
-        let color = receiver.recv().await;
+        let color: RGB8 = receiver.recv().await.into();
         leds.write([color; 23].into_iter()).unwrap();
     }
 }
@@ -221,7 +234,7 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
         let r = socket
             .accept(IpListenEndpoint {
                 addr: None,
-                port: 8080,
+                port: 80,
             })
             .await;
         println!("Connected...");
@@ -233,7 +246,7 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
 
         use embedded_io::asynch::Write;
 
-        let mut buffer = [0u8; 1024];
+        let mut buffer = [0u8; 512];
         let mut pos = 0;
         loop {
             match socket.read(&mut buffer).await {
@@ -242,16 +255,39 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
                     break;
                 }
                 Ok(len) => {
-                    sender.send(RGB8::new(255, 0, 0)).await;
                     let to_print =
                         unsafe { core::str::from_utf8_unchecked(&buffer[..(pos + len)]) };
 
                     println!("read {} bytes: {}", len, to_print);
-                    // Here we have to parse the request to see if it is a POST request
-                    // If it is a POST request we need to parse the body to get the RGB8 data
-                    if to_print.contains("\r\n\r\n") {
-                        println!("{}", to_print);
-                        break;
+                    if to_print.starts_with("POST") {
+                        let r = socket.write_all(b"HTTP/1.0 200 OK\r\n\r\n").await;
+                        if let Err(e) = r {
+                            println!("write error: {:?}", e);
+                        }
+                        let r = socket.flush().await;
+                        if let Err(e) = r {
+                            println!("flush error: {:?}", e);
+                        }
+                        println!("POST request");
+                        // No-copy string handling
+                        let mut lines = to_print.lines();
+                        // Skip the first 7 lines
+                        (0..=6).into_iter().for_each(|_| {
+                            lines.next();
+                        });
+                        // The next line is hopefully the body
+                        let body = lines.next().unwrap();
+                        println!("Body: {}", body);
+                        if let Ok((color, _)) = serde_json_core::from_str::<OwnRGB8>(body) {
+                            println!("Got color: {:?}", color);
+                            sender.send(color).await;
+                        }
+                        Timer::after(Duration::from_millis(1000)).await;
+
+                        socket.close();
+                        Timer::after(Duration::from_millis(1000)).await;
+
+                        socket.abort();
                     }
 
                     pos += len;
@@ -262,31 +298,5 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
                 }
             };
         }
-
-        let r = socket
-            .write_all(
-                b"HTTP/1.0 200 OK\r\n\r\n\
-            <html>\
-                <body>\
-                    <h1>Hello Rust! Hello esp-wifi!</h1>\
-                </body>\
-            </html>\r\n\
-            ",
-            )
-            .await;
-        if let Err(e) = r {
-            println!("write error: {:?}", e);
-        }
-
-        let r = socket.flush().await;
-        if let Err(e) = r {
-            println!("flush error: {:?}", e);
-        }
-        Timer::after(Duration::from_millis(1000)).await;
-
-        socket.close();
-        Timer::after(Duration::from_millis(1000)).await;
-
-        socket.abort();
     }
 }
