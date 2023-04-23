@@ -41,6 +41,7 @@ macro_rules! singleton {
         x
     }};
 }
+/// Since smart_leds doesn't expose serde serialization for RGB8, we have to implement it ourselves.
 #[derive(Debug, Copy, Clone, serde::Deserialize, serde::Serialize)]
 struct OwnRGB8 {
     r: u8,
@@ -104,8 +105,7 @@ fn main() -> ! {
     embassy::init(&clocks, timer_group0.timer0);
 
     let config = Config::Dhcp(Default::default());
-
-    let seed = 123456; // very random, very secure seed
+    let seed = 123456; // Change this for your own project
 
     // Init network stack
     let stack = &*singleton!(Stack::new(
@@ -268,24 +268,15 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
                         }
                         println!("POST request");
                         // No-copy string handling
-                        let mut lines = to_print.lines();
-                        // Skip the first 7 lines
-                        (0..=6).into_iter().for_each(|_| {
-                            lines.next();
-                        });
-                        // The next line is hopefully the body
-                        let body = lines.next().unwrap();
-                        println!("Body: {}", body);
-                        if let Ok((color, _)) = serde_json_core::from_str::<OwnRGB8>(body) {
-                            println!("Got color: {:?}", color);
-                            sender.send(color).await;
+                        if let Some(body) =
+                            to_print.lines().into_iter().find(|l| l.starts_with("{"))
+                        {
+                            println!("Body: {}", body);
+                            if let Ok((color, _)) = serde_json_core::from_str::<OwnRGB8>(body) {
+                                println!("Got color: {:?}", color);
+                                sender.send(color).await;
+                            }
                         }
-                        Timer::after(Duration::from_millis(1000)).await;
-
-                        socket.close();
-                        Timer::after(Duration::from_millis(1000)).await;
-
-                        socket.abort();
                     }
 
                     pos += len;
@@ -295,6 +286,10 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
                     break;
                 }
             };
+            Timer::after(Duration::from_millis(100)).await;
+            socket.close();
+            Timer::after(Duration::from_millis(100)).await;
+            socket.abort();
         }
     }
 }
