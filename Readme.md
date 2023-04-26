@@ -3,6 +3,9 @@
 [![issues - Nereuxofficial](https://img.shields.io/github/issues/Nereuxofficial/nostd-wifi-lamp?style=flat-square)](https://github.com/Nereuxofficial/nostd-wifi-lamp/issues)
 ![Commits/m](https://img.shields.io/github/commit-activity/m/Nereuxofficial/nostd-wifi-lamp?style=flat-square)
 
+![image](https://user-images.githubusercontent.com/37740907/234689372-d34c1a6a-9ef1-4e9d-9ad7-e375131d3512.png)
+![image](https://user-images.githubusercontent.com/37740907/234694404-828c6bfc-2ea6-4a56-9bc0-13f2fca3bffb.png)
+
 A Wi-Fi controllable lamp written in Rust for the ESP32 using esp-hal. This was created for a blog post you can read 
 [here](https://nereux.blog/posts/esp32-ws2812-dino-light-2/).
 ## Usage
