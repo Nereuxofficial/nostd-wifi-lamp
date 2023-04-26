@@ -1,5 +1,10 @@
 # Nostd-wifi-lamp
-A wifi lamp controllable via curl POST requests
+[![License](https://img.shields.io/badge/License-AGPLv3-blue?style=flat-square)](#license)
+[![issues - Nereuxofficial](https://img.shields.io/github/issues/Nereuxofficial/nostd-wifi-lamp?style=flat-square)](https://github.com/Nereuxofficial/nostd-wifi-lamp/issues)
+![Commits/m](https://img.shields.io/github/commit-activity/m/Nereuxofficial/nostd-wifi-lamp?style=flat-square)
+
+A Wi-Fi controllable lamp written in Rust for the ESP32 using esp-hal. This was created for a blog post you can read 
+[here](https://nereux.blog/posts/esp32-ws2812-dino-light-2/).
 ## Usage
 Sadly, I cannot provide binaries as they include WI-FI SSID and Passwords.
 After [installing Rust](https://rustup.rs) follow these steps
