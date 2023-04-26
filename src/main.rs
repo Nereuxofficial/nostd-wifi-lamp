@@ -4,6 +4,8 @@
 
 extern crate alloc;
 
+use alloc::format;
+use alloc::string::String;
 use embassy_executor::_export::StaticCell;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Config, IpListenEndpoint, Stack, StackResources};
@@ -12,6 +14,7 @@ use embassy_executor::Executor;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
+use embedded_io::asynch::Write;
 use embedded_svc::wifi::{ClientConfiguration, Configuration, Wifi};
 use esp_backtrace as _;
 use esp_hal_smartled::{smartLedAdapter, SmartLedsAdapter};
@@ -242,8 +245,6 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
             continue;
         }
 
-        use embedded_io::asynch::Write;
-
         let mut buffer = [0u8; 512];
         let mut pos = 0;
         loop {
@@ -277,8 +278,10 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
                                 sender.send(color).await;
                             }
                         }
+                    } else if to_print.starts_with("GET") {
+                        // If we get a GET request, send the index.html file
+                        send_index(&mut socket).await;
                     }
-
                     pos += len;
                 }
                 Err(e) => {
@@ -291,5 +294,17 @@ async fn task(stack: &'static Stack<WifiDevice<'static>>) {
             Timer::after(Duration::from_millis(100)).await;
             socket.abort();
         }
+    }
+}
+const INDEX: &[u8] = include_bytes!("index.html");
+async fn send_index(socket: &mut TcpSocket<'_>) {
+    let to_send = format!("HTTP/1.0 200 OK\r\n\r\n{}", String::from_utf8_lossy(INDEX));
+    let r = socket.write_all(to_send.as_bytes()).await;
+    if let Err(e) = r {
+        println!("write error: {:?}", e);
+    }
+    let r = socket.flush().await;
+    if let Err(e) = r {
+        println!("flush error: {:?}", e);
     }
 }
