@@ -7,7 +7,7 @@ A Wi-Fi controllable lamp written in Rust for the ESP32 using esp-hal. This was 
 [here](https://nereux.blog/posts/esp32-ws2812-dino-light-2/).
 ## Usage
 Sadly, I cannot provide binaries as they include WI-FI SSID and Passwords.
-After [installing espup](https://github.com/esp-rs/espup) follow these steps
+After [installing espup](https://github.com/esp-rs/espup) follow these steps:
 
 1. Install the `cargo-espflash` tool
 ```bash
