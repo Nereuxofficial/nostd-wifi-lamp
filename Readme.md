@@ -7,21 +7,19 @@ A Wi-Fi controllable lamp written in Rust for the ESP32 using esp-hal. This was 
 [here](https://nereux.blog/posts/esp32-ws2812-dino-light-2/).
 ## Usage
 Sadly, I cannot provide binaries as they include WI-FI SSID and Passwords.
-After [installing Rust](https://rustup.rs) follow these steps
-1. Install Rust nightly
-```bash
-rustup default nightly
-```
-2. Install the `cargo-espflash` tool
+After [installing espup](https://github.com/esp-rs/espup) follow these steps
+
+1. Install the `cargo-espflash` tool
 ```bash
 # We need the newest espflash as of now
 cargo install espflash --git https://github.com/esp-rs/cargo-espflash.git
 ```
-3. Clone this repository
+2. Clone this repository
 ```bash
 git clone https://github.com/Nereuxofficial/nostd-wifi-lamp
+cd nostd-wifi-lamp
 ```
-4. flash it to your ESP32
+3. Flash it to your ESP32
 ```bash
 export SSID="your SSID" PASSWORD="your password"a
 cargo run --release
