@@ -24,9 +24,14 @@ cd nostd-wifi-lamp
 ```
 3. Flash it to your ESP32
 ```bash
-export SSID="your SSID" PASSWORD="your password"a
+export SSID="your SSID" PASSWORD="your password"
 cargo run --release
 ```
+And then enjoy your wifi light! You can now connect to the printed IP Adress in your browser or alternatively send this curl request:
+```bash
+curl -v -d '{"r":0,"g":0,"b":200}' http://<ESP_IP_ADDRESS>
+```
+
 (If the last step doesn't work try pressing the `Boot` Button during the command, which always worked for me.)
 
 ## Credits
