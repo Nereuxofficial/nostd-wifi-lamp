@@ -6,29 +6,14 @@ extern crate alloc;
 
 use alloc::format;
 use alloc::string::String;
-use embassy_executor::_export::StaticCell;
 use embassy_net::tcp::TcpSocket;
-use embassy_net::{Config, IpListenEndpoint, Stack, StackResources};
-
-use embassy_executor::Executor;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{Duration, Timer};
-use embedded_io::asynch::Write;
+use embedded_io::Write;
 use embedded_svc::wifi::{ClientConfiguration, Configuration, Wifi};
-use esp_backtrace as _;
-use esp_hal_smartled::{smartLedAdapter, SmartLedsAdapter};
 use esp_println::println;
-use esp_wifi::initialize;
-use esp_wifi::wifi::{WifiController, WifiDevice, WifiEvent, WifiMode, WifiState};
-use hal::clock::{ClockControl, CpuClock};
-use hal::gpio::{
-    Bank1GpioRegisterAccess, DualCoreInteruptStatusRegisterAccessBank1, Gpio33Signals, GpioPin,
-    InputOutputAnalogPinType,
-};
-use hal::pulse_control::ConfiguredChannel0;
+use hal::prelude::*;
 use hal::{embassy, peripherals::Peripherals, prelude::*, timer::TimerGroup, Rtc, IO};
-use hal::{PulseControl, Rng};
 use lazy_static::lazy_static;
 use smart_leds::SmartLedsWrite;
 use smart_leds::RGB8;
@@ -58,15 +43,6 @@ impl Into<RGB8> for OwnRGB8 {
     }
 }
 
-// Since lifetime limitations don't allow us to pass a receiver and sender to the webserver and
-// led_task threads, this is an acceptable workaround. This channel is over a
-// CriticalsectionRawMutex, since lazy_static requires the Mutex to be Thread-safe. In there we
-// store up 3 RGB8 values and when full, sending will wait until a message is received.
-lazy_static! {
-    static ref CHANNEL: Channel<CriticalSectionRawMutex, OwnRGB8, 3> =
-        embassy_sync::channel::Channel::new();
-}
-
 #[global_allocator]
 static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
@@ -81,9 +57,8 @@ fn init_heap() {
         ALLOCATOR.init(heap_start as *mut u8, HEAP_SIZE);
     }
 }
-static EXECUTOR: StaticCell<Executor> = StaticCell::new();
-#[entry]
-fn main() -> ! {
+#[main]
+async fn main(_spawner: Spawner) -> ! {
     init_heap();
 
     let peripherals = Peripherals::take();
@@ -120,10 +95,16 @@ fn main() -> ! {
     // Initialize the embassy executor
     let executor = EXECUTOR.init(Executor::new());
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
-    let pulse = PulseControl::new(peripherals.RMT, &mut system.peripheral_clock_control).unwrap();
-    let mut led = <smartLedAdapter!(23)>::new(pulse.channel0, io.pins.gpio33);
+    let rmt = Rmt::new(
+        peripherals.RMT,
+        80u32.MHz(),
+        &mut system.peripheral_clock_control,
+        &clocks,
+    )
+    .unwrap();
+    let mut led: IO = <smartLedAdapter!(0, 23)>::new(rmt.channel0, io.pins.gpio33);
     // Turn the lights off by default
-    led.write([RGB8::default(); 23].into_iter()).unwrap();
+    led.write(&[RGB8::default(); 23]).unwrap();
     executor.run(|spawner| {
         spawner.spawn(connection(controller)).ok();
         spawner.spawn(net_task(stack)).ok();
